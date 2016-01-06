@@ -1,0 +1,13 @@
+name = Date iCal Rules
+description = Enables rules to generate physical files for iCal feed views.
+package = Date/Time
+php = 5.3
+core = 7.x
+dependencies[] = views (>=7.x-3.5)
+dependencies[] = date_views
+dependencies[] = entity
+dependencies[] = libraries (>=7.x-2.0)
+dependencies[] = date
+dependencies[] = date_api
+dependencies[] = date_ical
+dependencies[] = rules
