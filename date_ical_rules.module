@@ -9,6 +9,63 @@ function date_ical_rules_rules_action_info() {
       'label' => t('Generate iCal File'),
       'group' => t('Date iCal'),
       'parameter' => array(
+        'created' => array(
+          'label' => t('Created'),
+          'type' => 'date'
+        ),
+        'updated' => array(
+          'label' => t('Last Modified'),
+          'type' => 'date'
+        ),
+        'start' => array(
+          'label' => t('Start Datetime'),
+          'type' => 'date'
+        ),
+        'end' => array(
+          'label' => t('End Datetime'),
+          'type' => 'date'
+        ),
+        'url' => array(
+          'label' => t('URL'),
+          'type' => 'text'
+        ),
+        'account' => array(
+          'label' => t('Account'),
+          'type' => 'user'
+        ),
+        'summary' => array(
+          'label' => t('Title'),
+          'type' => 'text'
+        ),
+        'description' => array(
+          'label' => t('Description'),
+          'type' => 'text',
+        ),
+        'location' => array(
+          'label' => t('Location'),
+          'type' => 'text'
+        ),
+        'filename' => array(
+          'label' => t('Filename'),
+          'type' => 'text'
+        ),
+
+      ),
+      'provides' => array(
+        'file' => array(
+          'type' => 'entity',
+          'label' => t('File')
+        ),
+        'filepath' => array(
+          'type' => 'text',
+          'label' => t('Filepath')
+        )
+      )
+    ),
+    'generate_date_ical_file_url' => array(
+      'label' => t('Generate iCal File From URL'),
+      'group' => t('Date iCal'),
+      'parameter' => array(
         'url' => array(
           'label' => t('iCal Feed URL'),
           'type' => 'text',
@@ -35,9 +92,152 @@ function date_ical_rules_rules_action_info() {
 }
 
 /**
+* Callback to generate the ical file, from provided parameters.
+*/
+function generate_date_ical_file($created, $updated, $start, $end, $url, $account, $summary, $description, $location, $filename) {
+  $file = null;
+  $filepath = null;
+  $events = array(
+    array(
+      'created' => new DateObject($created),
+      'last-updated' => new DateObject($updated),
+      'url' => $url,
+      'uid' => $account->uid,
+      'summary' => $summary,
+      'description' => $description,
+      'location' => $location,
+      'start' => new DateObject($start),
+      'end' => new DateObject($end),
+    )
+  );
+  $library = libraries_load('iCalcreator');
+  if (!$library['loaded']) {
+    // The iCalcreator library isn't available, so we can't output anything.
+    drupal_set_message('Please install the iCalcreator library to enable iCal output.');
+  }
+  else {
+    // Create a vcalendar object using the iCalcreator library.
+    $config = array('unique_id' => 'Date iCal v' . DATE_ICAL_VERSION);
+    $vcalendar = new vcalendar($config);
+    $vcalendar->setMethod('PUBLISH');
+
+    // Now add the VEVENTs.
+    $timezones = array();
+    foreach ($events as $event) {
+      if (empty($event)) {
+        // The row plugin returned NULL for this row, which can happen due to
+        // either various error conditions, or because an RRULE is involved.
+        // When this happens, just skip it.
+        continue;
+      }
+
+      $vevent = $vcalendar->newComponent('vevent');
+      $vevent->setUid($event['uid']);
+      $vevent->setSummary($event['summary']);
+
+      // Get the start date as an array.
+      $start = $event['start']->toArray();
+      $start_timezone = $event['start']->getTimezone()->getName();
+      $timezones[$start_timezone] = $start_timezone;
+
+      if (FALSE) {
+        // All Day events need to be DATEs, rather than DATE-TIMEs.
+        $vevent->setDtstart($start['year'], $start['month'], $start['day'],
+          FALSE, FALSE, FALSE, FALSE, array('VALUE' => 'DATE'));
+      }
+      else {
+        $vevent->setDtstart(
+          $start['year'],
+          $start['month'],
+          $start['day'],
+          $start['hour'],
+          $start['minute'],
+          $start['second'],
+          $start_timezone
+        );
+      }
+
+      // Add the Timezone info to the start date, for use later.
+      $start['tz'] = $event['start']->getTimezone();
+
+      if (!empty($event['url'])) {
+        $vevent->setUrl($event['url'], array('type' => 'URI'));
+      }
+      if (!empty($event['location'])) {
+        $vevent->setLocation($event['location']);
+      }
+      if (!empty($event['description'])) {
+        $vevent->setDescription($event['description']);
+      }
+      if (!empty($event['last-modified'])) {
+        $lm = $event['last-modified']->toArray();
+        $vevent->setLastModified(
+          $lm['year'],
+          $lm['month'],
+          $lm['day'],
+          $lm['hour'],
+          $lm['minute'],
+          $lm['second'],
+          $lm['timezone']
+        );
+      }
+      if (!empty($event['created'])) {
+        $created = $event['created']->toArray();
+        $vevent->setCreated(
+          $created['year'],
+          $created['month'],
+          $created['day'],
+          $created['hour'],
+          $created['minute'],
+          $created['second'],
+          $created['timezone']
+        );
+      }
+
+      // Allow other modules to alter the vevent before it's exported.
+
+    }
+
+    // Now add to the calendar all the timezones used by the events.
+    foreach ($timezones as $timezone) {
+      if (strtoupper($timezone) != 'UTC') {
+        iCalUtilityFunctions::createTimezone($vcalendar, $timezone);
+      }
+    }
+
+    // Allow other modules to alter the vcalendar before it's exported.
+
+
+    $output = $vcalendar->createCalendar();
+    // iCalcreator escapes all commas and semicolons in string values, as the
+    // spec demands. However, some calendar clients are buggy and fail to
+    // unescape these characters. Users may choose to unescape them here to
+    // sidestep those clients' bugs.
+    // NOTE: This results in a non-compliant iCal feed, but it seems like a
+    // LOT of major clients are bugged this way.
+    if (TRUE) {
+      $output = str_replace('\,', ',', $output);
+      $output = str_replace('\;', ';', $output);
+    }
+
+  }
+
+  if ($file = file_save_data($output, 'public://' . $filename . '.ics')) {
+    $relative_path = file_create_url($file->uri);
+    $relative_path = str_replace('http://' .$_SERVER['HTTP_HOST']. '/' , '', $relative_path);
+    $filepath = $relative_path;
+  }
+
+  return array(
+    'file' => $file,
+    'filepath' => $filepath
+  );
+}
+
+/**
 * Callback function to generate the ical file.
 */
-function generate_date_ical_file($url, $filename = '') {
+function generate_date_ical_file_url($url, $filename = '') {
 
   $content = file_get_contents('http://' .$_SERVER['HTTP_HOST'] . $url);
   if ($file = file_save_data($content, 'public://' . $filename .'.ics' ) ) {
