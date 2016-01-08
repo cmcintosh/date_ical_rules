@@ -23,11 +23,15 @@ function date_ical_rules_rules_action_info() {
         ),
         'end' => array(
           'label' => t('End Datetime'),
-          'type' => 'date'
+          'type' => 'date',
+          'optional' => TRUE,
+          'allow null' => TRUE,
         ),
         'url' => array(
           'label' => t('URL'),
-          'type' => 'text'
+          'type' => 'text',
+          'optional' => TRUE,
+          'allow null' => TRUE,
         ),
         'account' => array(
           'label' => t('Account'),
@@ -43,7 +47,9 @@ function date_ical_rules_rules_action_info() {
         ),
         'location' => array(
           'label' => t('Location'),
-          'type' => 'text'
+          'type' => 'text',
+          'optional' => TRUE,
+          'allow null' => TRUE,
         ),
         'filename' => array(
           'label' => t('Filename'),
@@ -92,24 +98,58 @@ function date_ical_rules_rules_action_info() {
 }
 
 /**
+* Sanitize the token-generated filename, to make sure the OS doesn't reject it
+* Ported from Transliteration module ( transliteration_clean_filename )
+*/
+function date_ical_clean_filename($filename) {
+  if (is_array($filename)) {
+    foreach ($filename as $key => $value) {
+      $filename[$key] = date_ical_clean_filename($value);
+    }
+    return $filename;
+  }
+  
+  // Replace whitespace.
+  $filename = str_replace(' ', '_', $filename);
+  // Remove remaining unsafe characters.
+  $filename = preg_replace('![^0-9A-Za-z_.-]!', '', $filename);
+  // Remove multiple consecutive non-alphabetical characters.
+  $filename = preg_replace('/(_)_+|(\.)\.+|(-)-+/', '\\1\\2\\3', $filename);
+  // Force lowercase to prevent issues on case-insensitive file systems.
+  $filename = strtolower($filename);
+  
+  return $filename;
+}
+
+/**
 * Callback to generate the ical file, from provided parameters.
 */
 function generate_date_ical_file($created, $updated, $start, $end, $url, $account, $summary, $description, $location, $filename) {
   $file = null;
   $filepath = null;
-  $events = array(
-    array(
+  $singleEvent = array(
       'created' => new DateObject($created),
       'last-updated' => new DateObject($updated),
-      'url' => $url,
       'uid' => $account->uid,
       'summary' => $summary,
       'description' => $description,
-      'location' => $location,
       'start' => new DateObject($start),
-      'end' => new DateObject($end),
-    )
-  );
+    );
+
+  // location, end date and url are optional - so only pass them if they have a value
+  if ($location) {
+    $singleEvent['location'] = $location;
+  }
+
+  if ($end) {
+    $singleEvent['end'] = new DateObject($end);
+  }
+
+  if ($url) {
+    $singleEvent['url'] = $url;
+  }
+      
+  $events = array( $singleEvent );
   $library = libraries_load('iCalcreator');
   if (!$library['loaded']) {
     // The iCalcreator library isn't available, so we can't output anything.
@@ -221,6 +261,8 @@ function generate_date_ical_file($created, $updated, $start, $end, $url, $accoun
     }
 
   }
+  
+  $filename = date_ical_clean_filename($filename);
 
   if ($file = file_save_data($output, 'public://' . $filename . '.ics')) {
     $relative_path = file_create_url($file->uri);
@@ -240,6 +282,8 @@ function generate_date_ical_file($created, $updated, $start, $end, $url, $accoun
 function generate_date_ical_file_url($url, $filename = '') {
 
   $content = file_get_contents('http://' .$_SERVER['HTTP_HOST'] . $url);
+  $filename = date_ical_clean_filename($filename);
+
   if ($file = file_save_data($content, 'public://' . $filename .'.ics' ) ) {
     $relative_path = file_create_url($file->uri);
     $relative_path = str_replace('http://' .$_SERVER['HTTP_HOST']. '/' , '', $relative_path);
